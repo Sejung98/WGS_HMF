@@ -1,0 +1,51 @@
+#!/bin/bash
+input_dir=$1 && shift
+tumor_id=$(echo $1 | cut -d'-' -f1,2) && shift
+
+args="-tumor ${tumor_id}"
+
+echo "Running sam to bam with args: ${args}"
+
+echo "start sam to bam: ${tumor_id}-BL"
+
+samtools view -Sb ${input_dir}/${tumor_id}-BL.sam \
+> ${input_dir}/${tumor_id}-BL.bam &
+PID1=$!
+
+echo "start sam to bam: ${tumor_id}-T"
+samtools view -Sb ${input_dir}/${tumor_id}-T.sam \
+> ${input_dir}/${tumor_id}-T.bam &
+PID2=$!
+
+wait $PID1 $PID2 
+
+echo "${tumor_id} sam to bam tasks have been completed"
+
+#sorting
+echo "start sorting:${tumor_id}-BL"
+samtools sort ${input_dir}/${tumor_id}-BL.bam \
+-o ${input_dir}/${tumor_id}-BL_sorted.bam &
+PID1=$!
+
+echo "start sorting:${tumor_id}-T"
+samtools sort ${input_dir}/${tumor_id}-T.bam \
+-o ${input_dir}/${tumor_id}-T_sorted.bam &
+PID2=$!
+
+wait $PID1 $PID2 
+echo "${tumor_id} sorting tasks have been completed"
+
+#indexing
+echo "start indexing:${tumor_id}-BL"
+samtools index ${input_dir}/${tumor_id}-BL_sorted.bam \
+	${input_dir}/${tumor_id}-BL.bam.bai &
+PID1=$!
+
+echo "start indexing:${tumor_id}-T"
+samtools index ${input_dir}/${tumor_id}-T_sorted.bam \
+	${input_dir}/${tumor_id}-T.bam.bai &
+PID2=$!
+
+wait $PID1 $PID2 
+echo "${tumor_id} indexing tasks have been completed"
+

@@ -1,0 +1,22 @@
+#!/bin/bash
+
+input_dir=$1 && shift
+output_dir=$1 && shift
+tumor_id=$(echo $1 | cut -d'-' -f1,2) && shift
+
+args="-tumor ${tumor_id}"
+
+if [[ ! -d "${output_dir}" ]]; then
+  mkdir ${output_dir}
+fi
+
+
+if ls ${input_dir}/*_R1.fastq.gz 1> /dev/null 2>&1; then
+    echo "Running pre fastqc with args: ${args}"
+    fastqc -o ${output_dir} -t 10  ${input_dir}/${tumor_id}-BL_R1.fastq.gz  ${input_dir}/${tumor_id}-BL_R2.fastq.gz \
+                                   ${input_dir}/${tumor_id}-T_R1.fastq.gz ${input_dir}/${tumor_id}-T_R2.fastq.gz
+else
+    echo "Running post fastqc with args: ${args}"
+    fastqc -o ${output_dir} -t 10  ${input_dir}/${tumor_id}-BL_R1_paired.fq.gz  ${input_dir}/${tumor_id}-BL_R2_paired.fq.gz \
+                                   ${input_dir}/${tumor_id}-T_R1_paired.fq.gz ${input_dir}/${tumor_id}-T_R2_paired.fq.gz
+fi

@@ -1,0 +1,8 @@
+##fileformat=VCFv4.2
+##INFO=<ID=BLACKLIST,Number=0,Type=Flag,Description="Blacklisted location">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chr2	58159793	.	G	GTAAT	.	.	BLACKLIST
+chr5	177093242	.	G	A	.	.	BLACKLIST
+chr7	5978683	.	TGA	T	.	.	BLACKLIST
+chr16	23619986	.	G	C	.	.	BLACKLIST
+chr22	28725099	.	A	G	.	.	BLACKLIST

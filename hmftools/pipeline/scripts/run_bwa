@@ -1,0 +1,33 @@
+#!/bin/bash
+
+input_dir=$1 && shift
+output_dir=$1 && shift
+tumor_id=$(echo $1 | cut -d'-' -f1,2) && shift
+resources_dir=$1 && shift
+args="-tumor ${tumor_id}"
+
+if [[ ! -d "${output_dir}" ]]; then
+  mkdir ${output_dir}
+fi
+
+echo "Running bwa with args: ${args}"
+
+echo "start mapping: ${tumor_id}-BL"
+
+bwa mem -M -R "@RG\tID:${tumor_id}\tSM:${tumor_id}-BL" -t 10 \
+	${resources_dir}/38/ref_genome/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna \
+	${input_dir}/${tumor_id}-BL_R1.fastq.gz \
+	${input_dir}/${tumor_id}-BL_R2.fastq.gz > ${output_dir}/${tumor_id}-BL.sam &
+PID1=$!
+
+echo "start mapping: ${tumor_id}-T"
+
+bwa mem -M -R "@RG\tID:${tumor_id}\tSM:${tumor_id}-T" -t 10 \
+	${resources_dir}/38/ref_genome/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna \
+	${input_dir}/${tumor_id}-T_R1.fastq.gz \
+	${input_dir}/${tumor_id}-T_R2.fastq.gz > ${output_dir}/${tumor_id}-T.sam &
+PID2=$!
+
+wait $PID1 $PID2 
+
+echo "${tumor_id} mapping tasks have been completed"

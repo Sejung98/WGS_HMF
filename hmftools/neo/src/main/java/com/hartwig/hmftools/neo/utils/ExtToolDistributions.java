@@ -1,0 +1,239 @@
+package com.hartwig.hmftools.neo.utils;
+
+import static com.hartwig.hmftools.common.utils.config.ConfigUtils.addLoggingOptions;
+import static com.hartwig.hmftools.common.utils.config.ConfigUtils.setLogLevel;
+import static com.hartwig.hmftools.common.utils.file.FileWriterUtils.addOutputOptions;
+import static com.hartwig.hmftools.common.utils.file.FileWriterUtils.closeBufferedWriter;
+import static com.hartwig.hmftools.common.utils.file.FileWriterUtils.createBufferedWriter;
+import static com.hartwig.hmftools.neo.NeoCommon.NE_LOGGER;
+import static com.hartwig.hmftools.neo.bind.BindCommon.FLD_PRED_AFFINITY;
+import static com.hartwig.hmftools.neo.bind.BindCommon.FLD_PRES_SCORE;
+import static com.hartwig.hmftools.neo.bind.BindData.loadBindData;
+import static com.hartwig.hmftools.neo.bind.RandomDistributionTask.generateDistributionBuckets;
+import static com.hartwig.hmftools.neo.bind.RandomPeptideDistribution.initialiseWriter;
+
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.hartwig.hmftools.common.utils.VectorUtils;
+import com.hartwig.hmftools.common.utils.config.ConfigBuilder;
+import com.hartwig.hmftools.neo.bind.BindCommon;
+import com.hartwig.hmftools.neo.bind.BindData;
+import com.hartwig.hmftools.neo.bind.RandomDistributionTask;
+import com.hartwig.hmftools.neo.bind.RandomPeptideConfig;
+import com.hartwig.hmftools.neo.bind.RandomPeptideDistribution;
+import com.hartwig.hmftools.neo.bind.ScoreDistributionData;
+
+import org.jetbrains.annotations.NotNull;
+
+// rather than use/trust McfFlurry's affinity and presentation score percentiles, rebuild a distribution for each of them using their
+// scores on a set of random peptides (eg 100K)
+public class ExtToolDistributions
+{
+    private final RandomPeptideConfig mConfig;
+    private final String mMcfPredictionsFile;
+    private final String mValidationDataFile;
+    private final boolean mUsePresentation;
+
+    private final RandomPeptideDistribution mRandomDistribution;
+    private BufferedWriter mDistributionWriter;
+
+    private static final String PREDICTIONS_FILE = "mcf_rand_predictions_file";
+    private static final String VALIDATION_FILE = "validation_data_file";
+    private static final String USE_PRESENTATION = "use_presentation";
+
+    public ExtToolDistributions(final ConfigBuilder configBuilder)
+    {
+        mMcfPredictionsFile = configBuilder.getValue(PREDICTIONS_FILE);
+        mValidationDataFile = configBuilder.getValue(VALIDATION_FILE);
+
+        mConfig = RandomPeptideConfig.forReading(configBuilder);
+        mUsePresentation = configBuilder.hasFlag(USE_PRESENTATION);
+
+        mRandomDistribution = new RandomPeptideDistribution(mConfig);
+
+        mDistributionWriter = null;
+    }
+
+    public void run()
+    {
+        if(mMcfPredictionsFile != null)
+        {
+            NE_LOGGER.info("loading MCF random peptide predictions from file({}) using {}",
+                    mMcfPredictionsFile, mUsePresentation ? "presentation" : "affinity");
+
+            String distributionFilename = BindCommon.formFilename(mConfig.OutputDir, "mcf_random_peptide_dist", mConfig.OutputId);
+            mDistributionWriter = initialiseWriter(distributionFilename);
+
+            processFile(mMcfPredictionsFile);
+            closeBufferedWriter(mDistributionWriter);
+
+            NE_LOGGER.info("MCF random peptide affinity distribution build complete");
+            return;
+        }
+
+        if(mValidationDataFile != null)
+        {
+            processValidationData(mValidationDataFile);
+        }
+    }
+
+    private void processValidationData(final String filename)
+    {
+        final Map<String,Map<Integer,List<BindData>>> allelePeptideData = Maps.newHashMap();
+
+        final Map<String,Integer> otherColumns = Maps.newLinkedHashMap();
+
+        if(!loadBindData(filename, Lists.newArrayList(), allelePeptideData, otherColumns))
+            return;
+
+        if(!mRandomDistribution.loadData())
+            return;
+
+        try
+        {
+            String peptideFilename = BindCommon.formFilename(mConfig.OutputDir, "mcf_validation_peptide_scores", mConfig.OutputId);
+
+            BufferedWriter peptideWriter = createBufferedWriter(peptideFilename, false);
+            peptideWriter.write("Allele,Peptide,RankPerc,PredictedAffinity,AffinityPerc,PresentationScore,PresentationPerc");
+            peptideWriter.newLine();
+
+            int predAffinityIndex = otherColumns.get(FLD_PRED_AFFINITY);
+            int affinityPercIndex = otherColumns.get("AffinityPercentile");
+            int presScoreIndex = otherColumns.get(FLD_PRES_SCORE);
+            int presPercIndex = otherColumns.get("PresentationPercentile");
+
+            for(Map.Entry<String,Map<Integer,List<BindData>>> alleleEntry : allelePeptideData.entrySet())
+            {
+                final String allele = alleleEntry.getKey();
+
+                final Map<Integer,List<BindData>> pepLenBindDataMap = alleleEntry.getValue();
+
+                for(Map.Entry<Integer,List<BindData>> pepLenEntry : pepLenBindDataMap.entrySet())
+                {
+                    List<BindData> bindDataList = pepLenEntry.getValue();
+
+                    for(BindData bindData : bindDataList)
+                    {
+                        double presentationScore = Double.parseDouble(bindData.getOtherData().get(presScoreIndex));
+                        double presentationPercentile = Double.parseDouble(bindData.getOtherData().get(presPercIndex));
+                        double predictedAffinity = Double.parseDouble(bindData.getOtherData().get(predAffinityIndex));
+                        double affinityPerc = Double.parseDouble(bindData.getOtherData().get(affinityPercIndex));
+                        double scoreValue = mUsePresentation ? presentationScore : predictedAffinity;
+                        double scoreRank = mRandomDistribution.getScoreRank(allele, bindData.peptideLength(), scoreValue);
+
+                        peptideWriter.write(String.format("%s,%s,%.6f,%.2f,%.6f,%.6f,%.6f",
+                                allele, bindData.Peptide, scoreRank, predictedAffinity,
+                                affinityPerc, presentationScore, presentationPercentile));
+                        peptideWriter.newLine();
+                    }
+                }
+            }
+
+            peptideWriter.close();
+        }
+        catch(IOException e)
+        {
+            NE_LOGGER.error("failed to init allele summary writer: {}", e.toString());
+            return;
+        }
+    }
+
+    private void processFile(final String filename)
+    {
+        // read the predictions for each allele in turn and create a distribution from it's affinity scores
+
+        // Allele,Peptide,PredictedAffinity,PresentationScore
+        final Map<String,Map<Integer,List<BindData>>> allelePeptideData = Maps.newHashMap();
+
+        final Map<String,Integer> otherColumns = Maps.newLinkedHashMap();
+
+        if(!loadBindData(filename, Lists.newArrayList(), allelePeptideData, otherColumns))
+            return;
+
+        for(Map.Entry<String,Map<Integer,List<BindData>>> alleleEntry : allelePeptideData.entrySet())
+        {
+            List<BindData> alleleBindList = Lists.newArrayList();
+            alleleEntry.getValue().values().forEach(x -> alleleBindList.addAll(x));
+            generateDistribution(alleleEntry.getKey(), alleleBindList, otherColumns);
+        }
+
+        return;
+    }
+
+    private void generateDistribution(final String allele, final List<BindData> bindDataList, final Map<String,Integer> otherColumns)
+    {
+        NE_LOGGER.info("allele({}) building distribution with {} random peptide predictions", allele, bindDataList.size());
+
+        Map<Integer,List<Double>> pepLenScoresMap = Maps.newHashMap();
+
+        int predAffinityIndex = otherColumns.get(FLD_PRED_AFFINITY);
+        int presScoreIndex = otherColumns.get(FLD_PRES_SCORE);
+
+        int count = 0;
+
+        for(BindData bindData : bindDataList)
+        {
+            List<Double> peptideScores = pepLenScoresMap.get(bindData.peptideLength());
+
+            if(peptideScores == null)
+            {
+                peptideScores = Lists.newArrayList();
+                pepLenScoresMap.put(bindData.peptideLength(), peptideScores);
+            }
+
+            // affinity goes from low to high as binding gets worse, presentation is the opposite
+            double presentationScore = Double.parseDouble(bindData.getOtherData().get(presScoreIndex));
+            double predictedAffinity = Double.parseDouble(bindData.getOtherData().get(predAffinityIndex));
+
+            double scoreValue = mUsePresentation ? presentationScore : predictedAffinity;
+            boolean isAscending = mUsePresentation ? false : true;
+            VectorUtils.optimisedAdd(peptideScores, scoreValue, isAscending);
+
+            ++count;
+
+            if(count > 0 && (count % 500000) == 0)
+            {
+                NE_LOGGER.debug("added {} sorted random peptide scores", count);
+            }
+        }
+
+        final List<double[]> discreteScoreData = generateDistributionBuckets();
+
+        for(Map.Entry<Integer,List<Double>> entry : pepLenScoresMap.entrySet())
+        {
+            NE_LOGGER.debug("allele({}) peptideLength({}) writing distribution", allele, entry.getKey());
+
+            List<ScoreDistributionData> scoreDistribution = RandomDistributionTask.generateDistribution(
+                    allele, entry.getKey(), entry.getValue(), discreteScoreData);
+
+            RandomPeptideDistribution.writeDistribution(mDistributionWriter, scoreDistribution);
+        }
+    }
+
+    public static void main(@NotNull final String[] args)
+    {
+        ConfigBuilder configBuilder = new ConfigBuilder();
+        RandomPeptideConfig.addConfigForReading(configBuilder);
+        configBuilder.addPath(PREDICTIONS_FILE, true, "MCF predictions file");
+        configBuilder.addPath(VALIDATION_FILE, true, "Binding validation file");
+        configBuilder.addFlag(USE_PRESENTATION, "Rank and score using presentation instead of affinity");
+        addLoggingOptions(configBuilder);
+        addOutputOptions(configBuilder);
+
+        if(!configBuilder.parseCommandLine(args))
+        {
+            configBuilder.logInvalidDetails();
+            System.exit(1);
+        }
+
+        setLogLevel(configBuilder);
+
+        ExtToolDistributions extToolDistributions = new ExtToolDistributions(configBuilder);
+        extToolDistributions.run();
+    }
+}

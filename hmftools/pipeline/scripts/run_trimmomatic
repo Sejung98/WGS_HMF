@@ -1,0 +1,27 @@
+#!/bin/bash
+
+trimmomatic_jar=$1 && shift
+tumor_id=$(echo $1 | cut -d'-' -f1,2) && shift
+threads=$1 && shift 
+samples=$1/data_fastq && shift
+adapters_dir=$1/trimmomatic_adapters && shift 
+trimmomatic_dir=$1 &&shift
+
+if [[ ! -d "${trimmomatic_dir}" ]]; then
+  mkdir ${trimmomatic_dir}
+fi
+
+args="-tumor ${tumor_id}"
+
+echo "Running trimmomatic with args: ${args}"
+
+java -jar ${trimmomatic_jar} PE -threads ${threads} -phred33 \
+	${samples}/${tumor_id}-BL_R1.fastq.gz ${samples}/${tumor_id}-BL_R2.fastq.gz \
+	${trimmomatic_dir}/${tumor_id}-BL_R1_paired.fq.gz ${trimmomatic_dir}/${tumor_id}-BL_R1_unpaired.fq.gz \
+	${trimmomatic_dir}/${tumor_id}-BL_R2_paired.fq.gz ${trimmomatic_dir}/${tumor_id}-BL_R2_unpaired.fq.gz \
+	ILLUMINACLIP:${adapters_dir}/TruSeq3-PE-2.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 CROP:150 MINLEN:36
+
+java -jar ${trimmomatic_jar} PE -threads ${threads} -phred33 ${samples}/${tumor_id}-T_R1.fastq.gz ${samples}/${tumor_id}-T_R2.fastq.gz \
+	${trimmomatic_dir}/${tumor_id}-T_R1_paired.fq.gz ${trimmomatic_dir}/${tumor_id}-T_R1_unpaired.fq.gz \
+	${trimmomatic_dir}/${tumor_id}-T_R2_paired.fq.gz ${trimmomatic_dir}/${tumor_id}-T_R2_unpaired.fq.gz \
+	ILLUMINACLIP:${adapters_dir}/TruSeq3-PE-2.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 CROP:150 MINLEN:36

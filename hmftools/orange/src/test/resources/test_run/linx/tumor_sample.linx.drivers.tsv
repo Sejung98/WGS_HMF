@@ -1,0 +1,4 @@
+clusterId	gene	eventType
+60	CDKN2A	LOH_SV_TELO
+65	PTEN	LOH_SV_TELO
+68	PTEN	DEL
